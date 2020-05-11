@@ -2,10 +2,10 @@
 /** PhPUnit tests for bibtexbrowser
 
 To run them:
-$ phpunit bibtexbrowser-test.php
+$ phpunit BibtexbrowserTest.php
 
 With coverage:
-$ phpunit --coverage-html ./coverage btb-test.php
+$ phpunit --coverage-html ./coverage BibtexbrowserTest.php
 
 (be sure that xdebug is enabled: /etc/php5/cli/conf.d# ln -s ../../mods-available/xdebug.ini)
 */
@@ -59,13 +59,14 @@ class SimpleDisplayExt extends SimpleDisplay {
 }
 
 
-class BTBTest extends PHPUnit_Framework_TestCase {
+class BibtexbrowserTest extends PHPUnit_Framework_TestCase {
 
-    protected function setUp()
+    public function setUp():void
     {
         // resetting the default link style
         bibtexbrowser_configure('BIBTEXBROWSER_LINK_STYLE','bib2links_default');
         bibtexbrowser_configure('ABBRV_TYPE','index');
+        bibtexbrowser_configure('BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT', false);
     }
 
   function test_checkdoc() {
@@ -202,7 +203,7 @@ class BTBTest extends PHPUnit_Framework_TestCase {
     $this->assertFalse(config_value('BIBTEXBROWSER_NO_DEFAULT'));
     ob_start();
     default_message();
-    $this->assertContains('Congratulations', ob_get_clean());
+    $this->assertStringContainsString('Congratulations', ob_get_clean());
   }
 
 
@@ -219,7 +220,7 @@ class BTBTest extends PHPUnit_Framework_TestCase {
     ob_start();
     $d->display();
     $data = ob_get_clean();
-    $this->assertContains('Livres', $data);
+    $this->assertStringContainsString('Livres', $data);
   }
 
 
@@ -229,7 +230,7 @@ class BTBTest extends PHPUnit_Framework_TestCase {
     $results=$btb->multisearch($q);
     $this->assertTrue(count($results) == 1);
     $entry = $results[0];
-    $this->assertContains("aKey-withSlash",$entry->toHTML());
+    $this->assertStringContainsString("aKey-withSlash",$entry->toHTML());
 
     $q=array(Q_KEY=>'aKey-withSlash');
     $results=$btb->multisearch($q);
@@ -339,7 +340,7 @@ class BTBTest extends PHPUnit_Framework_TestCase {
   function test_link_configuration() {
     bibtexbrowser_configure('BIBTEXBROWSER_LINKS_TARGET','_self');
     $test_data = fopen('php://memory','x+');
-    fwrite($test_data, "@book{aKey,pdf={myarticle.pdf}}\n"
+    fwrite($test_data, "@book{aKey,pdf={myarticle.pdf}}\n@book{bKey,url={myarticle.pdf}}\n@book{cKey,url={myarticle.xyz}}\n"
     );
     fseek($test_data,0);
     $btb = new BibDataBase();
@@ -349,6 +350,10 @@ class BTBTest extends PHPUnit_Framework_TestCase {
     $this->assertEquals('<a href="myarticle.pdf">[pdf]</a>',$first_entry->getPdfLink());
     $this->assertEquals('<a href="myarticle.pdf"><img class="icon" src="pdficon.png" alt="[pdf]" title="pdf"/></a>',$first_entry->getLink('pdf','pdficon.png'));
     $this->assertEquals('<a href="myarticle.pdf">[see]</a>',$first_entry->getLink('pdf',NULL,'see'));
+    $second_entry=$btb->bibdb[array_keys($btb->bibdb)[1]];
+    $this->assertEquals('<a href="myarticle.pdf">[pdf]</a>',$second_entry->getPdfLink());
+    $third_entry=$btb->bibdb[array_keys($btb->bibdb)[2]];
+    $this->assertEquals('<a href="myarticle.xyz">[url]</a>',$third_entry->getPdfLink());
   }
 
   // see https://github.com/monperrus/bibtexbrowser/pull/14
@@ -486,7 +491,7 @@ class BTBTest extends PHPUnit_Framework_TestCase {
 
     function test_formatting() {
 
-        $bibtex = "@article{aKey61,title={An article Book},author = {Meyer, Heribert  and   {Advanced Air and Ground Research Team} and Foo Bar}}\n";
+        $bibtex = "@article{aKey61,title={An article Book},author = {Meyer, Heribert  and   {Advanced Air and Ground Research Team} and Foo Bar}}\n@article{bKey61,title={An article Book},author = {Meyer, Heribert and Foo Bar}}\n";
         $test_data = fopen('php://memory','x+');
         fwrite($test_data, $bibtex);
         fseek($test_data,0);
@@ -531,7 +536,16 @@ class BTBTest extends PHPUnit_Framework_TestCase {
         $this->assertEquals("Advanced Air and Ground Research Team", $authors[1]);
         $this->assertEquals("Foo Bar", $authors[2]);
         $this->assertEquals("Heribert Meyer, Advanced Air and Ground Research Team and Foo Bar", $entry->getFormattedAuthorsString());
-
+        
+        // test Oxford comma with default options
+        bibtexbrowser_configure('USE_COMMA_AS_NAME_SEPARATOR_IN_OUTPUT', false);
+        bibtexbrowser_configure('USE_INITIALS_FOR_NAMES', false);
+        bibtexbrowser_configure('USE_FIRST_THEN_LAST', false);
+        bibtexbrowser_configure('USE_OXFORD_COMMA', true);
+        $this->assertEquals("Meyer, Heribert, Advanced Air and Ground Research Team, and Foo Bar", $entry->getFormattedAuthorsString());
+        $entry = $db->getEntryByKey('bKey61');
+        $this->assertEquals("Meyer, Heribert and Foo Bar", $entry->getFormattedAuthorsString());
+        bibtexbrowser_configure('USE_OXFORD_COMMA', false);
     }
 
     function test_parsing_author_list() {
@@ -730,7 +744,26 @@ class BTBTest extends PHPUnit_Framework_TestCase {
         $db = new BibDataBase();
         $db->update_internal("inline", $test_data);
         $entry=$db->getEntryByKey("key");
-        $this->assertContains('<a href="https://scholar.google.com/scholar?cites=1234">[citations]</a>', $entry->toHTML());
+        $this->assertStringContainsString('<a href="https://scholar.google.com/scholar?cites=1234">[citations]</a>', $entry->toHTML());
+    }
+
+
+    function test_before() {
+        $bibtex = "@article{doe2000,title={An article},author={Jane Doe},journal={The Wordpress Journal},year=2000}@book{doo2001,title={A book},author={Jane Doe},year=2001}";
+        $test_data = fopen('php://memory','x+');
+        fwrite($test_data, $bibtex);
+        fseek($test_data,0);
+        $db = new BibDataBase();
+        $_GET[Q_FILE] = 'sample.bib';
+        $db->update_internal("inline", $test_data);
+
+        $d = new SimpleDisplay();
+        $d->setDB($db);
+        ob_start();
+        NoWrapper($d);
+        $output = ob_get_clean();
+        $res = eval("return ".file_get_contents('reference-output-wp-publications.txt').";");
+        $this->assertEquals(strip_tags($res['rendered']), "&#091;wp-publications bib=sample.bib all=1&#093; gives:\n".strip_tags($output)."\n");
     }
 
     function test80() {
@@ -768,6 +801,27 @@ class BTBTest extends PHPUnit_Framework_TestCase {
 
     }
 
+
+    function test_multiple_table() {
+        ob_start();
+
+        $btb = new BibDataBase();
+        $btb->load('bibacid-utf8.bib');
+
+        $display = new SimpleDisplay($btb, array(Q_YEAR => '1997'));
+        $display->display();
+
+        $display = new SimpleDisplay($btb, array(Q_YEAR => '2010'));
+        $display->display();
+
+        $output = ob_get_clean();
+
+        // assertion: we have two tables in the output
+        $xml = new SimpleXMLElement("<doc>".$output."</doc>");
+        $result = $xml->xpath('//table');
+        $this->assertEquals(2,count($result));
+
+    }
 
 
 } // end class

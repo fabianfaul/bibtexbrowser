@@ -82,7 +82,7 @@ Create a bib file with the publication records (e.g. csgroup2008.bib) and upload
 =====FAQ=====
 
 ====How to embed Bibtexbrowser into a website?====
-To embed Bibtexbrowser into a website, you car use it as a library:
+To embed Bibtexbrowser into a website, you could use it as a library:
 
 <pre>
 &lt;?php
@@ -356,28 +356,19 @@ Add in ''bibtexbrowser.local.php'':
 ?>
 </pre>
 
-====How to configure the order of Bibtex entries?====
-You can set the default order function in ''bibtexbrowser.local.php'':
-<pre>
-&lt;?php
-// can be @define('ORDER_FUNCTION','compare_bib_entry_by_title');
-define('ORDER_FUNCTION','compare_bib_entry_by_bibtex_order');
-?>
-</pre>
+====How to configure the sorting order of Bibtex entries?====
 
-Or programmatically:
+The default order is first by bibtex field year, then by bibtex field month, per functions `compare_bib_entry_by_year` and `compare_bib_entry_by_month`.
+
+You can change this with ''define('ORDER_FUNCTION',...)'' and ''define('ORDER_FUNCTION_FINE',...)'' in ''bibtexbrowser.local.php'':
 <pre>
 &lt;?php
-$_GET['library']=1;
-require_once('bibtexbrowser.php');
-$db = new BibDataBase();
-$db->load('biblio.bib');
-$query = array('year'=>'2014');
-$entries=$db->multisearch($query);
-uasort($entries, 'compare_bib_entries');
-foreach ($entries as $bibentry) {
-  echo $bibentry->getYear().'<br/>';
+
+function my_own_order($a, $b) {
+  return strcmp($a->getKey(),$b->getkey());
 }
+
+define('ORDER_FUNCTION','my_own_order');
 ?>
 </pre>
 
@@ -554,7 +545,8 @@ In your project's `composer.json`, just add this <pre>"monperrus/bibtexbrowser":
 }
 </pre>
 
-With composer, a test server can be started with this command:
+With composer, a test server can be started with the following commands:
+<pre>cd vendor/monperrus/bibtexbrowser/</pre>
 <pre>composer serve</pre>
 Which runs this script:
 <pre>php -S localhost:29896 bibtexbrowser.php</pre>

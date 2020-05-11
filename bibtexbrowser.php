@@ -3,8 +3,8 @@
 URL: http://www.monperrus.net/martin/bibtexbrowser/
 Questions & Bug Reports: https://github.com/monperrus/bibtexbrowser/issues
 
-(C) 2012-2018 Github contributors
-(C) 2006-2018 Martin Monperrus
+(C) 2012-2020 Github contributors
+(C) 2006-2020 Martin Monperrus
 (C) 2014 Markus Jochim
 (C) 2013 Matthieu Guillaumin
 (C) 2005-2006 The University of Texas at El Paso / Joel Garcia, Leonardo Ruiz, and Yoonsik Cheon
@@ -123,6 +123,7 @@ if (defined('ENCODING')) {
 // do we add [bibtex] links ?
 @define('BIBTEXBROWSER_BIBTEX_LINKS',true);
 // do we add [pdf] links ?
+// if the file extention is not .pdf, the field name (pdf, url, or file) is used instead
 @define('BIBTEXBROWSER_PDF_LINKS',true);
 // do we add [doi] links ?
 @define('BIBTEXBROWSER_DOI_LINKS',true);
@@ -168,9 +169,10 @@ if (defined('ENCODING')) {
 // USE_FIRST_THEN_LAST => Herbert Meyer
 @define('USE_COMMA_AS_NAME_SEPARATOR_IN_OUTPUT',false);// output authors in a comma separated form, e.g. "Meyer, H"?
 @define('USE_INITIALS_FOR_NAMES',false); // use only initials for all first names?
-@define('USE_FIRST_THEN_LAST',false); // use only initials for all first names?
+@define('USE_FIRST_THEN_LAST',false); // put first names before last names?
 @define('FORCE_NAMELIST_SEPARATOR', ''); // if non-empty, use this to separate multiple names regardless of USE_COMMA_AS_NAME_SEPARATOR_IN_OUTPUT
 @define('LAST_AUTHOR_SEPARATOR',' and ');
+@define('USE_OXFORD_COMMA',false); // adds an additional separator in addition to LAST_AUTHOR_SEPARATOR if there are more than two authors
 
 @define('TYPES_SIZE',10); // number of entry types per table
 @define('YEAR_SIZE',20); // number of years per table
@@ -1026,6 +1028,7 @@ function latex2html($line, $do_clean_extra_bracket=true) {
 
 
   $line = char2html($line,"'",'a',"acute");
+  $line = char2html($line,"'",'c',"acute");
   $line = char2html($line,"'",'e',"acute");
   $line = char2html($line,"'",'i',"acute");
   $line = char2html($line,"'",'o',"acute");
@@ -1060,6 +1063,7 @@ function latex2html($line, $do_clean_extra_bracket=true) {
   $line = char2html($line,'r','a',"ring");
 
   $line = char2html($line,'c','c',"cedil");
+  $line = char2html($line,'c','s',"cedil");
   $line = char2html($line,'v','s',"caron");
 
   $line = str_replace('\\ae','&aelig;', $line);
@@ -1077,6 +1081,12 @@ function latex2html($line, $do_clean_extra_bracket=true) {
 
   $line = str_replace('\\v{c}','&#269',$line);
   $line = str_replace('\\v{C}','&#268',$line);
+  
+  // handling \textsuperscript{....} FAILS if there still are nested {}
+  $line = preg_replace('/\\\\textsuperscript\{(.*)\}/U','<sup>\\1</sup>', $line);
+  
+  // handling \textsubscript{....} FAILS if there still are nested {}
+  $line = preg_replace('/\\\\textsubscript\{(.*)\}/U','<sub>\\1</sub>', $line);
 
   if ($do_clean_extra_bracket) {
     // clean extra tex curly brackets, usually used for preserving capitals
@@ -1306,27 +1316,43 @@ class BibEntry {
     return $link;
   }
 
-  /** same as `getPdfLink`, kept for backward compatibility */
-  function getUrlLink($iconurl, $label) {
-    return $this->getPdfLink($iconurl, $label);
+  /** kept for backward compatibility */
+  function getPdfLink($iconurl = NULL, $label = NULL) {
+    return $this->getUrlLink($iconurl);
   }
 
   /** returns a "[pdf]" link for the entry, if possible.
       Tries to get the target URL from the 'pdf' field first, then from 'url' or 'file'.
+      Performs a sanity check that the file extension is 'pdf' or 'ps' and uses that as link label.
+      Otherwise (and if no explicit $label is set) the field name is used instead.
     */
-  function getPdfLink($iconurl = NULL, $label = 'pdf') {
+  function getUrlLink($iconurl = NULL) {
     if ($this->hasField('pdf')) {
-      return $this->getLink('pdf', $iconurl, $label);
+      return $this->getAndRenameLink('pdf', $iconurl);
     }
     if ($this->hasField('url')) {
-      return $this->getLink('url', $iconurl, $label);
+      return $this->getAndRenameLink('url', $iconurl);
     }
     // Adding link to PDF file exported by Zotero
     // ref: https://github.com/monperrus/bibtexbrowser/pull/14
     if ($this->hasField('file')) {
-      return $this->getLink('file', $iconurl, $label);
+      return $this->getAndRenameLink('file', $iconurl);
     }
     return "";
+  }
+
+  /** See description of 'getUrlLink'
+    */
+  function getAndRenameLink($bibfield, $iconurl=NULL) {
+    $extension = strtolower(pathinfo(parse_url($this->getField($bibfield),PHP_URL_PATH),PATHINFO_EXTENSION));
+    switch ($extension) {
+      // overriding the label if it's a known extension
+      case 'html': return $this->getLink($bibfield, $iconurl, 'html'); break;
+      case 'pdf': return $this->getLink($bibfield, $iconurl, 'pdf'); break;
+      case 'ps': return $this->getLink($bibfield, $iconurl, 'ps'); break;
+      default:
+        return $this->getLink($bibfield, $iconurl, $bibfield);
+    }
   }
 
 
@@ -1562,7 +1588,13 @@ class BibEntry {
     for ($i=0;$i<count($authors)-2;$i++) {
       $result .= $authors[$i].$sep;
     }
-    $result .= $authors[count($authors)-2].bibtexbrowser_configuration('LAST_AUTHOR_SEPARATOR'). $authors[count($authors)-1];
+    $lastAuthorSeperator = bibtexbrowser_configuration('LAST_AUTHOR_SEPARATOR');
+    // add Oxford comma if there are more than 2 authors
+    if (bibtexbrowser_configuration('USE_OXFORD_COMMA') && count($authors)>2) {
+      $lastAuthorSeperator = $sep.$lastAuthorSeperator;
+      $lastAuthorSeperator = preg_replace("/ {2,}/", " ", $lastAuthorSeperator); // get rid of double spaces
+    }
+    $result .= $authors[count($authors)-2].$lastAuthorSeperator.$authors[count($authors)-1];
     return $result;
   }
 
@@ -1990,7 +2022,7 @@ function bib2links_default($bibentry) {
   }
 
   if (BIBTEXBROWSER_PDF_LINKS) {
-    $link = $bibentry->getPdfLink();
+    $link = $bibentry->getUrlLink();
     if ($link != '') { $links[] = $link; };
   }
 
@@ -3090,6 +3122,12 @@ class SimpleDisplay  {
   var $entries = array();
 
   var $headingLevel = BIBTEXBROWSER_HTMLHEADINGLEVEL;
+
+  function __construct($db = NULL, $query = NULL) {
+    if ($db == NULL) return;
+    $this->setEntries($db->multisearch($query));
+  }
+
   function incHeadingLevel ($by=1) {
   	$this->headingLevel += $by;
   }
@@ -3188,15 +3226,15 @@ class SimpleDisplay  {
       echo 'Options: '.@implode(',',$this->options).'<br/>';
     }
 
-    if ($this->headingLevel == BIBTEXBROWSER_HTMLHEADINGLEVEL) {
-      echo "\n".'<span class="count">';
-      if (count($this->entries) == 1) {
-        echo count ($this->entries).' '.__('result');
-      } else if (count($this->entries) != 0) {
-        echo count ($this->entries).' '.__('results');
-      }
-      echo "</span>\n";
-    }
+//     if ($this->headingLevel == BIBTEXBROWSER_HTMLHEADINGLEVEL) {
+//       echo "\n".'<span class="count">';
+//       if (count($this->entries) == 1) {
+//         echo count ($this->entries).' '.__('result');
+//       } else if (count($this->entries) != 0) {
+//         echo count ($this->entries).' '.__('results');
+//       }
+//       echo "</span>\n";
+//     }
     print_header_layout();
 
     $pred = NULL;
@@ -4172,7 +4210,7 @@ if (method_exists($content, 'getTitle')) {
   $content->display();
   echo poweredby();
 
-  if (BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT) {
+  if (c('BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT')) {
     javascript();
   }
 
@@ -4197,6 +4235,9 @@ usage:
 */
 function NoWrapper($content) {
   echo $content->display();
+  if (c('BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT')) {
+    javascript();
+  }
 }
 
 /** is used to create an subset of a bibtex file.
